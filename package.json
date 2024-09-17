@@ -11,5 +11,9 @@
   "devDependencies": {
     "typescript": "^5.5.3",
     "vite": "^5.4.6"
+  },
+  "dependencies": {
+    "babylonjs": "^5.57.1",
+    "babylonjs-gui": "^5.57.1"
   }
 }

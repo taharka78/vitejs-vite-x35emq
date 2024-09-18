@@ -20,7 +20,8 @@ const createScene = function(): BABYLON.Scene {
 
     const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
 
-    const hexGrid = new HexGrid(scene, 6, 6);
+    const defaultColor = new BABYLON.Color3(1, 1, 1);
+    const hexGrid = new HexGrid(scene, 6, 6, defaultColor);
 
     // Simple color picker
     const colors = [
@@ -33,7 +34,9 @@ const createScene = function(): BABYLON.Scene {
 
     scene.onPointerDown = function(evt, pickResult) {
         if (pickResult.hit && pickResult.pickedMesh === hexGrid.getMesh() && pickResult.pickedPoint) {
-            hexGrid.colorCell(pickResult.pickedPoint, colors[activeColorIndex]);
+            const x = Math.floor((pickResult.pickedPoint.x / (HexMetrics.innerRadius * 2) - pickResult.pickedPoint.z / (HexMetrics.outerRadius * 3)));
+            const z = Math.floor((pickResult.pickedPoint.z / (HexMetrics.outerRadius * 1.5)));
+            hexGrid.colorCell(x, z, colors[activeColorIndex]);
         }
     };
 

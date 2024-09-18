@@ -2,6 +2,7 @@
 import * as BABYLON from 'babylonjs';
 import { HexMetrics } from './HexaMetrics';
 import { HexCell } from './HexaCell';
+import { HexDirection } from './HexDirection';
 
 export class HexGrid {
     private cells: HexCell[] = [];
@@ -10,20 +11,101 @@ export class HexGrid {
     constructor(
         private scene: BABYLON.Scene,
         private width: number,
-        private height: number
+        private height: number,
+        private defaultColor: BABYLON.Color3
     ) {
         this.createGrid();
     }
 
     private createGrid(): void {
+        let i = 0;
         for (let z = 0; z < this.height; z++) {
             for (let x = 0; x < this.width; x++) {
-                const position = this.hexToPixel(x, z);
-                const cell = new HexCell(x, z, position);
-                this.cells.push(cell);
+                this.createCell(x, z, i++);
             }
         }
         this.createMesh();
+    }
+
+    private createCell(x: number, z: number, i: number): void {
+        const position = this.hexToPixel(x, z);
+        const cell = new HexCell(x, z, position, this.defaultColor);
+        this.cells[i] = cell;
+
+        if (x > 0) {
+            cell.setNeighbor(HexDirection.W, this.cells[i - 1]);
+        }
+        if (z > 0) {
+            if ((z & 1) === 0) {
+                cell.setNeighbor(HexDirection.SE, this.cells[i - this.width]);
+                if (x > 0) {
+                    cell.setNeighbor(HexDirection.SW, this.cells[i - this.width - 1]);
+                }
+            } else {
+                cell.setNeighbor(HexDirection.SW, this.cells[i - this.width]);
+                if (x < this.width - 1) {
+                    cell.setNeighbor(HexDirection.SE, this.cells[i - this.width + 1]);
+                }
+            }
+        }
+    }
+
+    private triangulate(): void {
+        const positions: number[] = [];
+        const indices: number[] = [];
+        const colors: number[] = [];
+
+        for (const cell of this.cells) {
+            this.triangulateCell(cell, positions, indices, colors);
+        }
+
+        const vertexData = new BABYLON.VertexData();
+        vertexData.positions = positions;
+        vertexData.indices = indices;
+        vertexData.colors = colors;
+
+        vertexData.applyToMesh(this.mesh);
+    }
+
+    private triangulateCell(cell: HexCell, positions: number[], indices: number[], colors: number[]): void {
+        const center = cell.position;
+
+        for (let d = HexDirection.NE; d <= HexDirection.NW; d++) {
+            this.triangulateDirection(d, cell, center, positions, indices, colors);
+        }
+    }
+
+    private triangulateDirection(direction: HexDirection, cell: HexCell, center: BABYLON.Vector3, positions: number[], indices: number[], colors: number[]): void {
+        const v1 = center.add(HexMetrics.getFirstSolidCorner(direction));
+        const v2 = center.add(HexMetrics.getSecondSolidCorner(direction));
+
+        this.addTriangle(center, v1, v2, positions, indices);
+        this.addTriangleColor(cell.color, colors);
+
+        if (direction <= HexDirection.SE) {
+            this.triangulateConnection(direction, cell, v1, v2, positions, indices, colors);
+        }
+    }
+
+    private triangulateConnection(direction: HexDirection, cell: HexCell, v1: BABYLON.Vector3, v2: BABYLON.Vector3, positions: number[], indices: number[], colors: number[]): void {
+        const neighbor = cell.getNeighbor(direction);
+        if (!neighbor) {
+            return;
+        }
+
+        const bridge = HexMetrics.getBridge(direction);
+        const v3 = v1.add(bridge);
+        const v4 = v2.add(bridge);
+
+        this.addQuad(v1, v2, v3, v4, positions, indices);
+        this.addQuadColor(cell.color, neighbor.color, colors);
+
+        const nextNeighbor = cell.getNeighbor(HexDirection.next(direction));
+        if (direction <= HexDirection.E && nextNeighbor) {
+            const v5 = v2.add(HexMetrics.getBridge(HexDirection.next(direction)));
+            this.addTriangle(v2, v4, v5, positions, indices);
+            this.addTriangleColor(cell.color, neighbor.color, nextNeighbor.color, colors);
+        }
     }
 
     private hexToPixel(x: number, z: number): BABYLON.Vector3 {
@@ -71,19 +153,12 @@ export class HexGrid {
         this.mesh.material = material;
     }
 
-    public colorCell(position: BABYLON.Vector3, color: BABYLON.Color3): void {
-        const pick = this.scene.pick(position.x, position.y);
-        if (pick.hit && pick.pickedMesh === this.mesh) {
-            const pickedPoint = pick.pickedPoint;
-            if (pickedPoint) {
-                const cellIndex = this.getCellIndexFromPosition(pickedPoint);
-                if (cellIndex !== -1) {
-                    const startIndex = cellIndex * 24; // 6 vertices per cell, 4 color components per vertex
-                    for (let i = 0; i < 24; i += 4) {
-                        this.mesh.setVerticesData(BABYLON.VertexBuffer.ColorKind, [color.r, color.g, color.b, 1], false, startIndex + i);
-                    }
-                }
-            }
+    public colorCell(x: number, z: number, color: BABYLON.Color3): void {
+        const index = x + z * this.width;
+        const cell = this.cells[index];
+        if (cell) {
+            cell.color = color;
+            this.triangulate();
         }
     }
 

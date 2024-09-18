@@ -68,14 +68,13 @@ export class HexGrid {
     }
 
     private triangulateCell(cell: HexCell, positions: number[], indices: number[], colors: number[]): void {
-        const center = cell.position;
-
         for (let d = HexDirection.NE; d <= HexDirection.NW; d++) {
-            this.triangulateDirection(d, cell, center, positions, indices, colors);
+            this.triangulateDirection(d, cell, positions, indices, colors);
         }
     }
 
-    private triangulateDirection(direction: HexDirection, cell: HexCell, center: BABYLON.Vector3, positions: number[], indices: number[], colors: number[]): void {
+    private triangulateDirection(direction: HexDirection, cell: HexCell, positions: number[], indices: number[], colors: number[]): void {
+        const center = cell.position;
         const v1 = center.add(HexMetrics.getFirstSolidCorner(direction));
         const v2 = center.add(HexMetrics.getSecondSolidCorner(direction));
 
@@ -96,15 +95,70 @@ export class HexGrid {
         const bridge = HexMetrics.getBridge(direction);
         const v3 = v1.add(bridge);
         const v4 = v2.add(bridge);
+        v3.y = v4.y = neighbor.elevation * HexMetrics.elevationStep;
 
-        this.addQuad(v1, v2, v3, v4, positions, indices);
-        this.addQuadColor(cell.color, neighbor.color, colors);
+        if (cell.getEdgeType(direction) === HexEdgeType.Slope) {
+            this.triangulateEdgeTerraces(v1, v2, cell, v3, v4, neighbor, positions, indices, colors);
+        } else {
+            this.addQuad(v1, v2, v3, v4, positions, indices);
+            this.addQuadColor(cell.color, neighbor.color, colors);
+        }
 
-        const nextNeighbor = cell.getNeighbor(HexDirection.next(direction));
+        const nextNeighbor = cell.getNeighbor(HexDirectionExtensions.next(direction));
         if (direction <= HexDirection.E && nextNeighbor) {
-            const v5 = v2.add(HexMetrics.getBridge(HexDirection.next(direction)));
-            this.addTriangle(v2, v4, v5, positions, indices);
-            this.addTriangleColor(cell.color, neighbor.color, nextNeighbor.color, colors);
+            const v5 = v2.add(HexMetrics.getBridge(HexDirectionExtensions.next(direction)));
+            v5.y = nextNeighbor.elevation * HexMetrics.elevationStep;
+            this.triangulateCorner(v2, cell, v4, neighbor, v5, nextNeighbor, positions, indices, colors);
+        }
+    }
+
+    private triangulateEdgeTerraces(
+        beginLeft: BABYLON.Vector3, beginRight: BABYLON.Vector3, beginCell: HexCell,
+        endLeft: BABYLON.Vector3, endRight: BABYLON.Vector3, endCell: HexCell,
+        positions: number[], indices: number[], colors: number[]
+    ): void {
+        for (let step = 1; step < HexMetrics.terraceSteps; step++) {
+            const v1 = HexMetrics.terraceLerp(beginLeft, endLeft, step);
+            const v2 = HexMetrics.terraceLerp(beginRight, endRight, step);
+            const c1 = HexMetrics.colorLerp(beginCell.color, endCell.color, step);
+
+            this.addQuad(HexMetrics.terraceLerp(beginLeft, endLeft, step - 1), HexMetrics.terraceLerp(beginRight, endRight, step - 1), v1, v2, positions, indices);
+            this.addQuadColor(HexMetrics.colorLerp(beginCell.color, endCell.color, step - 1), c1, colors);
+        }
+    }
+
+    private triangulateCorner(
+        bottom: BABYLON.Vector3, bottomCell: HexCell,
+        left: BABYLON.Vector3, leftCell: HexCell,
+        right: BABYLON.Vector3, rightCell: HexCell,
+        positions: number[], indices: number[], colors: number[]
+    ): void {
+        const leftEdgeType = bottomCell.getEdgeTypeWithCell(leftCell);
+        const rightEdgeType = bottomCell.getEdgeTypeWithCell(rightCell);
+
+        if (leftEdgeType === HexEdgeType.Slope) {
+            if (rightEdgeType === HexEdgeType.Slope) {
+                this.triangulateCornerTerraces(bottom, bottomCell, left, leftCell, right, rightCell, positions, indices, colors);
+            } else if (rightEdgeType === HexEdgeType.Flat) {
+                this.triangulateCornerTerraces(left, leftCell, right, rightCell, bottom, bottomCell, positions, indices, colors);
+            } else {
+                this.triangulateCornerTerracesCliff(bottom, bottomCell, left, leftCell, right, rightCell, positions, indices, colors);
+            }
+        } else if (rightEdgeType === HexEdgeType.Slope) {
+            if (leftEdgeType === HexEdgeType.Flat) {
+                this.triangulateCornerTerraces(right, rightCell, bottom, bottomCell, left, leftCell, positions, indices, colors);
+            } else {
+                this.triangulateCornerCliffTerraces(bottom, bottomCell, left, leftCell, right, rightCell, positions, indices, colors);
+            }
+        } else if (leftCell.getEdgeTypeWithCell(rightCell) === HexEdgeType.Slope) {
+            if (leftCell.elevation < rightCell.elevation) {
+                this.triangulateCornerCliffTerraces(right, rightCell, bottom, bottomCell, left, leftCell, positions, indices, colors);
+            } else {
+                this.triangulateCornerTerracesCliff(left, leftCell, right, rightCell, bottom, bottomCell, positions, indices, colors);
+            }
+        } else {
+            this.addTriangle(bottom, left, right, positions, indices);
+            this.addTriangleColor(bottomCell.color, leftCell.color, rightCell.color, colors);
         }
     }
 
@@ -166,6 +220,16 @@ export class HexGrid {
         const x = Math.round((position.x / (HexMetrics.innerRadius * 2) - position.z / (HexMetrics.outerRadius * 3)));
         const z = Math.round((position.z / (HexMetrics.outerRadius * 1.5)));
         return this.cells.findIndex(cell => cell.x === x && cell.z === z);
+    }
+
+    public editCell(x: number, z: number, elevation: number, color: BABYLON.Color4): void {
+        const index = x + z * this.width;
+        const cell = this.cells[index];
+        if (cell) {
+            cell.elevation = elevation;
+            cell.color = color;
+            this.triangulate();
+        }
     }
 
     public getMesh(): BABYLON.Mesh {
